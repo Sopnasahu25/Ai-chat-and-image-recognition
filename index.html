@@ -1,0 +1,932 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AI Image Recognition — Assistant (OpenAI)</title>
+
+<!-- TensorFlow & model -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.12.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+
+<!-- markdown + sanitizer -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
+
+<!-- emoji-mart (browser build) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/emoji-mart/css/emoji-mart.css" />
+<script src="https://cdn.jsdelivr.net/npm/emoji-mart/dist/browser.js"></script>
+
+<!-- jsPDF for PDF export + SheetJS for XLSX -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+  :root{ --gap:16px; --card-radius:12px; --trans:.22s ease; }
+  body { margin:0; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; height:100vh; display:flex; background:linear-gradient(180deg,#fddff5,#d4a0e0); color:#0b1220; transition: background var(--trans), color var(--trans); }
+  .app { display:grid; grid-template-columns:520px 1fr; gap:var(--gap); padding:18px; width:100%; box-sizing:border-box; }
+  .panel { background: rgb(232, 247, 248); border-radius:var(--card-radius); padding:12px; box-shadow: 10px 12px 30px rgba(158, 112, 195, 0.344); transition: box-shadow .2s ease, transform .12s ease; }
+ 
+  /* hover lifts */
+  .panel:hover { transform: translateY(-2px); box-shadow: 0 18px 40px rgba(2,6,23,0.09); }
+
+  .left { display:flex; flex-direction:column; gap:12px; height:calc(100vh - 36px); }
+  .cameraWrap{ position:relative; border-radius:10px; overflow:hidden; background:#000; min-height:340px; display:flex; align-items:center; justify-content:center; }
+  video, img.preview { width:100%; display:block; }
+  canvas.overlay{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
+  .controls{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  button.btn{ padding:8px 10px; border-radius:8px; border:none; cursor:pointer; background:#e7cbf4; color:rgb(27, 10, 10); transition: transform .12s ease, box-shadow .12s; }
+  button.btn:hover{ transform:translateY(-2px); box-shadow: 0 8px 20px rgba(243, 191, 252, 0.689); }
+  .secondary{ background:#f1d0f4;color:#09111a;border:1px solid rgba(4,32,55,0.06); padding:8px 10px; border-radius:8px; cursor:pointer; transition: transform .12s, box-shadow .12s; }
+  .secondary:hover{ transform:translateY(-2px); box-shadow: 0 8px 20px rgba(4,32,55,0.06); }
+  
+  .right{ display:flex; flex-direction:column; gap:12px; height:calc(100vh - 36px); }
+  .chatCard{ display:flex; flex-direction:column; justify-content:space-between; height:100%; padding:0; overflow:hidden; }
+  #chatBox{ padding:18px; height:100%; overflow:auto; box-sizing:border-box; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.02)); }
+  .bubble{ display:inline-block; padding:10px 14px; border-radius:14px; margin:8px 0; position:relative; max-width:72%; word-wrap:break-word; box-shadow: 0 8px 24px rgba(2,6,23,0.06); animation: slideFadeIn .36s cubic-bezier(.2,.9,.3,1); transition: transform .12s, box-shadow .12s; }
+  .bubble:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(2,6,23,0.09); }
+  .user{ background:lavender; color:#0b1220; float:right; clear:both; text-align:right; }
+  .ai{ background: lightblue; color:#032437; float:left; clear:both; text-align:left; }
+  body.dark .user{ background: #b57edc; color:#fff; }
+  body.dark .ai{ background:#d7c4ebaf; color:#fff; }
+  .bubble .meta{ font-size:12px; opacity:0.8; margin-top:6px; display:block; }
+  .bubble .thumb { display:block; max-width:220px; border-radius:8px; margin-top:8px; cursor:pointer; }
+  .thumb.active{ box-shadow: 0 0 0 3px rgba(6,182,212,0.14); transform: translateY(-2px); }
+
+  .trash{ position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; background:rgba(0,0,0,0.06); color:#fff; border:none; cursor:pointer; opacity:0; transition:opacity .12s ease, transform .12s ease; }
+  .bubble:hover .trash{ opacity:1; transform:scale(1); }
+  body.dark .bubble .trash{ background: rgba(255,255,255,0.06); color:#fff; }
+
+  @keyframes slideFadeIn { from{opacity:0; transform:translateY(12px)} to{opacity:1; transform:translateY(0)} }
+
+  .inputBar{ display:flex; gap:12px; align-items:center; padding:12px; border-top:1px solid rgba(0,0,0,0.06); background:lavenderblush; }
+  textarea#msg{ width:98%; min-height:44px; max-height:140px; resize:none; padding:8px 10px; border-radius:8px; border:1px solid rgba(71, 26, 106, 0.708); background:rgb(248, 221, 230); color:inherit; font-size:14px; margin-right:6px; }
+  body.dark textarea#msg{ border-color: rgba(255,255,255,0.06); }
+  .iconBtn{ width:38px; height:38px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; border:none; background-color:rgba(237, 201, 245, 0.541); transition: transform .12s, box-shadow .12s; }
+  .iconBtn:hover{ transform:translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
+
+  .dragOverlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; opacity:0; transition:opacity .15s; background: linear-gradient(90deg, rgba(6,182,212,0.08), rgba(6,182,212,0.04)); font-size:18px; color:#06b6d4; }
+  .dragging .dragOverlay{ pointer-events:auto; opacity:1; }
+
+  .contextMenu{ position:fixed; z-index:9999; background:var(--card-bg,#fff); border-radius:8px; padding:6px; box-shadow:0 8px 30px rgba(0,0,0,0.15); display:none; }
+  .contextMenu button{ display:block; width:100%; text-align:left; padding:8px 12px; border:none; background:transparent; cursor:pointer; }
+
+  /* make the Detection History panel flexible and scrollable */
+  .left > .panel:last-child { display:flex; flex-direction:column; }
+  #historyList { overflow:auto; flex:1; padding:8px; }
+
+  /* export dropdown */
+  .exportMenu { position:relative;background-color: rgb(244, 228, 241); display:inline-block; }
+  .exportMenu .menu { position:absolute; right:0; top:44px; background:var(--card-bg,#f7daef); box-shadow:0 8px 30px rgba(201, 184, 227, 0.15); display:none; z-index:999; }
+  .exportMenu .menu button { display:block; width:100%; padding:8px 12px; border:none; background:rgb(242, 221, 224); text-align:left; cursor:pointer; }
+
+  /* mic active */
+  .mic-active { background: #ef4444 !important; color:white !important; border-radius:8px; }
+
+  @media (max-width:980px){ .app{ grid-template-columns:1fr; } .left,.right{ height:auto; } #chatBox{ height:320px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- LEFT -->
+  <div class="left">
+    <div class="panel">
+      <header style="display:flex; gap:12px; align-items:center;">
+        <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='%2306b6d4'/><path d='M8 12h8' stroke='%23001415' stroke-width='1.2' stroke-linecap='round'/></svg>" style="width:44px;height:44px;border-radius:8px;">
+        <div>
+          <h3 style="margin:0">AI Vision — Camera & Upload</h3>
+          <div class="muted">Camera, drag & drop & detection history</div>
+        </div>
+      </header>
+
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="startCamBtn" class="btn">Start Camera</button>
+        <button id="stopCamBtn" class="secondary" disabled>Stop</button>
+
+        <label class="secondary" style="padding:8px 10px; border-radius:8px; cursor:pointer;">
+          Upload <input id="upload" type="file" accept="image/*" multiple style="display:none;" />
+        </label>
+
+        <button id="snapshotBtn" class="btn">Snapshot</button>
+
+        
+      </div>
+    </div>
+
+    <div class="panel cameraWrap" id="cameraArea">
+      <video id="video" playsinline autoplay muted style="width:100%;"></video>
+      <img id="staticPreview" class="preview" style="display:none;">
+      <canvas id="overlay" class="overlay"></canvas>
+      <div class="dragOverlay">Drop up to 3 images here to analyze</div>
+    </div>
+
+   <div class="panel">
+     <h4>Detection History</h4>
+      <div id="historyList" style="max-height:150px;"></div>
+    </div>
+  </div>
+
+    <!-- RIGHT - CHAT -->
+  <div class="right">
+    <div class="panel chatCard">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px;">
+        <div>
+          <h3 style="margin:0">Assistant Chat</h3>
+          <div class="muted">Ask about objects, upload images, compare items</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="clearAll" class="secondary">🗑 Clear Chat</button>
+          <button id="undoBtn" class="secondary" disabled>↩ Undo</button>
+          <!-- Export dropdown -->
+<div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <div class="exportMenu secondary" id="exportMenu" style="position:relative;">
+          <button id="exportBtn" class="secondary">Export ▾</button>
+          <div class="menu" id="exportDropdown" style="min-width:140px;">
+            <button id="exportTxt">Export TXT</button>
+            <button id="exportCsv">Export CSV</button>
+            <button id="exportPdf">Export PDF</button>
+            <button id="exportXls">None</button>
+
+          </div>
+          
+        </div>
+      </div>
+        </div>
+      </div>
+
+
+      <div id="chatBox"></div>
+
+      <div class="inputBar panel" style="margin-top:auto;">
+        <div class="textIn" style="flex:1;">
+          <textarea id="msg" placeholder="Type your question"></textarea>
+        </div>
+        <input id="emojiBtn" class="iconBtn" title="Emoji" type="button" value="😀" />
+        <input id="chatImageInput" type="file" accept="image/*" multiple style="display:none;" />
+        <button id="attachBtn" class="iconBtn">📎</button>
+        <button id="sendBtn" class="btn">Send</button>
+        <button id="voiceBtn" class="iconBtn" title="Speak">🎤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- context menu -->
+<div id="ctxMenu" class="contextMenu"></div>
+
+<script>
+/* ---------- App state ---------- */
+const MAX_UPLOAD = 3;
+let model = null;
+let stream = null;
+let running = false;
+const overlay = document.getElementById('overlay');
+const overlayCtx = overlay.getContext('2d');
+const video = document.getElementById('video');
+
+const dragOverlay = document.querySelector('.dragOverlay');
+const historyList = document.getElementById('historyList');
+const chatBox = document.getElementById('chatBox');
+const ctxMenu = document.getElementById('ctxMenu');
+
+let historyData = JSON.parse(localStorage.getItem('ai_hist')) || []; // detection history
+let chatData = JSON.parse(localStorage.getItem('ai_chat')) || []; // chat messages
+let lastDeleted = null;
+let lastDeletedTimeout = null;
+let selectedImageIds = new Set();
+
+// smoothing for camera detection to reduce false positives
+let lastDetectedLabel = null;
+let repeatCount = 0;
+
+// thresholds
+const MIN_CONFIDENCE = 0.45; // minimum for "confident" detection
+
+function uid(prefix='id'){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+function now(){ return new Date().toLocaleString(); }
+function saveState(){ localStorage.setItem('ai_hist', JSON.stringify(historyData)); localStorage.setItem('ai_chat', JSON.stringify(chatData)); }
+
+/* ---------- Markdown render safe ---------- */
+function md2html(md){
+  if(!md) return '';
+  try {
+    const raw = marked.parse(md);
+    return DOMPurify.sanitize(raw);
+  } catch(e){
+    return DOMPurify.sanitize(md);
+  }
+}
+
+/* ---------- UI render ---------- */
+function renderHistory(){
+  historyList.innerHTML = '';
+  for(const h of historyData){
+    const row = document.createElement('div');
+    row.className='histRow';
+    row.style.display='flex';
+    row.style.gap='8px';
+    row.style.alignItems='center';
+    row.style.marginBottom='8px';
+
+    const img = document.createElement('img');
+    img.src = h.src || '';
+    img.className='histThumb';
+    img.style.width='56px';
+    img.style.height='56px';
+    img.style.objectFit='cover';
+    img.style.borderRadius='8px';
+    img.style.cursor='pointer';
+    img.title = `${h.object} — ${h.score}%`;
+    img.addEventListener('click', ()=> openImageInChat(h.src, h.object));
+
+    const info = document.createElement('div');
+    info.innerHTML = `<strong>${h.object}</strong><br/><span class="muted">${h.timestamp}</span>`;
+
+    row.appendChild(img);
+    row.appendChild(info);
+    historyList.appendChild(row);
+  }
+  // ensure the newest items are visible at top: scroll to top
+  historyList.scrollTop = 0;
+}
+
+// ---------- helper to enable/disable Undo button ----------
+function undoEnable(state){
+  const btn = document.getElementById('undoBtn');
+  if (!btn) return;
+  btn.disabled = !state;
+}
+
+// ---------- Create and append chat bubble
+// now accepts optional `id` so rendered bubbles match chatData ids
+function createBubble({ id = null, who='ai', text='', imageSrc=null, imageId=null, raw=false, skipSave=false }){
+  const msgId = id || uid('msg');
+  const div = document.createElement('div');
+  div.className = 'bubble ' + (who==='user'?'user':'ai');
+  div.dataset.msgId = msgId;
+
+  let contentHtml = '';
+  if(imageSrc){
+    contentHtml += `<img src="${imageSrc}" class="thumb" data-img-id="${imageId||msgId}">`;
+  }
+  contentHtml += `<div class="content">${ raw ? text : md2html(text) }</div>`;
+  contentHtml += `<span class="meta">${new Date().toLocaleTimeString()}</span>`;
+  div.innerHTML = contentHtml;
+
+  // trash button
+  const trash = document.createElement('button');
+  trash.className='trash';
+  trash.title='Delete message';
+  trash.innerHTML = '🗑️';
+  trash.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    // find index in chatData (if exists)
+    const idx = chatData.findIndex(m => m.id === msgId);
+    // store for undo with index
+    lastDeleted = { who, text, imageSrc, imageId, id: msgId, index: idx, timestamp: Date.now() };
+    if(lastDeletedTimeout) clearTimeout(lastDeletedTimeout);
+    undoEnable(true);
+    // animate remove
+    div.style.transition = 'opacity .28s, transform .28s';
+    div.style.opacity = '0';
+    div.style.transform = 'scale(.96)';
+    setTimeout(()=> div.remove(), 280);
+    if(idx >= 0) chatData.splice(idx,1);
+    saveState();
+    lastDeletedTimeout = setTimeout(()=>{ undoEnable(false); lastDeleted = null; }, 8000);
+  });
+  div.appendChild(trash);
+
+  // image click select / context menu (unchanged)
+  const imgEl = div.querySelector('.thumb');
+  if(imgEl){
+    imgEl.addEventListener('click', (ev)=>{
+      const imgId = imgEl.dataset.imgId || imageId;
+      toggleImageSelection(imgId, imgEl);
+    });
+    imgEl.addEventListener('contextmenu', (ev)=>{
+      ev.preventDefault();
+      showContextMenu(ev.pageX, ev.pageY, imageId || (imgEl.dataset.imgId||msgId), imgEl.src);
+    });
+    // longpress mobile
+    let pressTimer;
+    imgEl.addEventListener('touchstart', e => {
+      pressTimer = setTimeout(()=> showContextMenu(e.touches[0].pageX, e.touches[0].pageY, imageId || (imgEl.dataset.imgId||msgId), imgEl.src), 600);
+    });
+    imgEl.addEventListener('touchend', ()=> clearTimeout(pressTimer));
+  }
+
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  if(!skipSave){
+    // persist the message into chatData using the same id
+    chatData.push({ id: msgId, who, text, imageSrc, imageId, timestamp: new Date().toISOString() });
+    saveState();
+  }
+  return {id: msgId, el:div};
+}
+
+// ---------- re-render chat: pass stored ids so DOM and chatData match ----------
+function renderChat(){
+  chatBox.innerHTML = '';
+  for(const m of chatData){
+    createBubble({ id: m.id, who: m.who, text: m.text, imageSrc: m.imageSrc, imageId: m.imageId, raw:false, skipSave:true });
+  }
+}
+
+function toggleImageSelection(imageId, imgEl){
+  if(!imageId) return;
+  if(selectedImageIds.has(imageId)){
+    selectedImageIds.delete(imageId);
+    imgEl.classList.remove('active');
+  } else {
+    selectedImageIds.add(imageId);
+    imgEl.classList.add('active');
+  }
+  updateStatusLine();
+}
+function updateStatusLine(){
+  const inputBar = document.querySelector('.inputBar');
+  let status = document.getElementById('selectionStatus');
+  if(!status){ status = document.createElement('div'); status.id='selectionStatus'; status.style.fontSize='13px'; status.style.marginBottom='6px'; inputBar.prepend(status); }
+  if(selectedImageIds.size){
+    const names=[];
+    for(const ch of chatData){
+      if(ch.imageId && selectedImageIds.has(ch.imageId)) names.push(ch.text || 'Image');
+    }
+    status.textContent = 'Asking about: ' + (names.join(', ') || 'image(s)');
+  } else status.textContent = '';
+}
+function clearSelections(){ selectedImageIds.clear(); document.querySelectorAll('.thumb.active').forEach(t=>t.classList.remove('active')); updateStatusLine(); }
+
+/* ---------- Context menu ---------- */
+function showContextMenu(x,y,imageId,src){
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top = y + 'px';
+  ctxMenu.innerHTML = '';
+  ctxMenu.style.display = 'block';
+  const items = [
+    { label: '🔍 Analyze Again', fn: ()=> analyzeImageFromChat(imageId, src) },
+    { label: '📖 Get Wikipedia Info', fn: ()=> fetchAndReplyWiki(null, src, imageId) },
+    { label: '🗑 Remove from Chat', fn: ()=> removeImageFromChat(imageId) },
+    { label: '📥 Save to History Only', fn: ()=> saveImageToHistoryOnly(imageId, src) }
+  ];
+  items.forEach(it=>{
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    b.addEventListener('click', e=>{ e.stopPropagation(); it.fn(); hideContextMenu(); });
+    ctxMenu.appendChild(b);
+  });
+}
+function hideContextMenu(){ ctxMenu.style.display = 'none'; }
+document.addEventListener('click', ()=>{ if(ctxMenu.style.display==='block') hideContextMenu(); });
+
+function removeImageFromChat(imageId){
+  const nodes = Array.from(chatBox.querySelectorAll('[data-msg-id]'));
+  nodes.forEach(n=>{
+    const img = n.querySelector('.thumb');
+    if(img && (img.dataset.imgId === imageId || img.dataset.imgId===String(imageId))){
+      n.style.animation = 'fadeOut .28s forwards';
+      setTimeout(()=> n.remove(), 280);
+    }
+  });
+  chatData = chatData.filter(m => m.imageId !== imageId);
+  saveState();
+}
+function saveImageToHistoryOnly(imageId, src){
+  addHistoryEntry('image', 1.0, src);
+  hideContextMenu();
+}
+
+/* ---------- Image detect & analyze ---------- */
+async function analyzeImage(imgElOrSrc, addToChat=true){
+  let img=null;
+  if(typeof imgElOrSrc === 'string'){
+    img = new Image();
+    img.src = imgElOrSrc;
+    await img.decode();
+  } else {
+    img = imgElOrSrc;
+    if(!img.complete) await new Promise(r=>img.onload=r);
+  }
+  if(!model){ createBubble({who:'ai', text: 'Model not ready'}); return null; }
+  // run detection
+  const predictions = await model.detect(img);
+  if(!predictions || !predictions.length){
+    if(addToChat) createBubble({ who:'ai', text:'Hmm, I could not detect anything obvious in that image.' });
+    return null;
+  }
+
+  // Build top candidates filtered by threshold
+  const filtered = predictions.filter(p => p.score >= (MIN_CONFIDENCE - 0.05)); // allow slightly lower for candidate list
+  // sort by score desc
+  filtered.sort((a,b)=> b.score - a.score);
+  const top = filtered[0] || predictions[0];
+
+  const objName = top.class;
+  const score = top.score;
+  const src = img.src || '';
+
+  addHistoryEntry(objName, score, src);
+
+  if(addToChat){
+    const imageId = uid('img');
+    createBubble({ who:'user', text: objName, imageSrc: src, imageId });
+    // show immediate short reply
+    createBubble({ who:'ai', text: `I detect: **${objName}** (${Math.round(score*100)}% confidence).` });
+
+    // ask backend to elaborate (send a short detection summary)
+    const summary = filtered.slice(0,5).map(p => `${p.class} (${(p.score*100).toFixed(1)}%)`).join(', ');
+    try {
+      const reply = await sendToBackend([{ role:'user', content: `Please describe this image in detail and explain the detected objects: ${summary}` }], null);
+      if(reply){
+        createBubble({ who:'ai', text: reply });
+      }
+    } catch(e){
+      console.warn('backend elaboration failed', e);
+    }
+  }
+
+  return { object: objName, score, src };
+}
+async function analyzeImageFromChat(imageId, src){
+  const img = new Image(); img.src = src; await img.decode();
+  const res = await analyzeImage(img, true);
+  hideContextMenu();
+  return res;
+}
+function captureSnapshot(){
+  if(!video || video.readyState<2) return;
+  const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+  const g = c.getContext('2d'); g.drawImage(video,0,0,c.width,c.height);
+  const data = c.toDataURL('image/png');
+  analyzeImage(data, true);
+}
+
+/* ---------- Wikipedia & DuckDuckGo ---------- */
+async function fetchWikipediaSummary(term){
+  try {
+    const res = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(term));
+    if(!res.ok) return null;
+    const j = await res.json();
+    if(j && j.extract) return { source:'wikipedia', text: j.extract, url: j.content_urls ? j.content_urls.desktop.page : null };
+    return null;
+  } catch(e){ console.error(e); return null; }
+}
+async function fetchDuckDuckGo(term){
+  try {
+    const res = await fetch('https://api.duckduckgo.com/?q='+encodeURIComponent(term)+'&format=json&no_html=1&no_redirect=1');
+    if(!res.ok) return null;
+    const j = await res.json();
+    if(j.AbstractText && j.AbstractText.length>20) return { source:'duckduckgo', text:j.AbstractText, url:j.AbstractURL || null };
+    if(j.RelatedTopics && j.RelatedTopics.length && j.RelatedTopics[0].Text) return { source:'duckduckgo', text:j.RelatedTopics[0].Text, url:j.RelatedTopics[0].FirstURL || null };
+    return null;
+  } catch(e){ console.error(e); return null; }
+}
+
+/* ---------- Backend OpenAI integration ---------- */
+async function sendToBackend(messages, wikiQuery=null){
+  try {
+    const resp = await fetch('http://localhost:3000/api/chat', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ messages, wikiQuery })
+    });
+    if(!resp.ok){
+      const txt = await resp.text();
+      throw new Error('Server error: ' + txt);
+    }
+    const j = await resp.json();
+    return j.reply;
+  } catch(e){
+    console.error('Backend error', e);
+    throw e;
+  }
+}
+
+/* ---------- Chat logic: send/receive ---------- */
+function printStatus(txt){ /* optional status, left for future */ }
+
+async function fetchAndReplyWiki(query=null, imageSrc=null, imageId=null){
+  // Determine query
+  let q = query;
+  if(!q){
+    if(selectedImageIds.size){
+      for(const sel of selectedImageIds){
+        const item = chatData.find(c => c.imageId === sel || c.id === sel);
+        if(item){ q = item.text || item.object || ''; break; }
+      }
+    } else {
+      for(let i=chatData.length-1;i>=0;i--){
+        if(chatData[i].who==='ai' && chatData[i].text){ q = chatData[i].text.replace(/^I detect:\s*/,'').split(/\n/)[0].trim(); break; }
+        if(chatData[i].imageSrc && chatData[i].text){ q = chatData[i].text; break; }
+      }
+    }
+  }
+  if(!q && imageSrc){
+    const item = historyData.find(h => h.src === imageSrc);
+    if(item) q = item.object;
+  }
+  if(!q){ createBubble({ who:'ai', text:'⚠️ Please tell me what you want to ask or select an image.' }); return; }
+
+  // Add user bubble locally
+  createBubble({ who:'user', text: q });
+
+  // Build message history for backend
+  const messagesForBackend = chatData.map(m => ({ role: m.who === 'user' ? 'user' : 'assistant', content: m.text || (m.imageSrc ? 'Image: ' + (m.text || '') : '') }));
+  messagesForBackend.push({ role: 'user', content: q });
+
+  // show typing indicator
+  const typingEl = document.createElement('div');
+  typingEl.className = 'bubble ai';
+  typingEl.innerHTML = '<div class="typing">AI is typing...</div>';
+  chatBox.appendChild(typingEl); chatBox.scrollTop = chatBox.scrollHeight;
+
+  try {
+    const reply = await sendToBackend(messagesForBackend, q);
+    typingEl.remove();
+    createBubble({ who:'ai', text: reply });
+    speak(reply.replace(/\n/g,' '));
+  } catch(e){
+    typingEl.remove();
+    createBubble({ who:'ai', text: 'Sorry — could not reach the AI server.' });
+  }
+}
+
+/* send plain message (Enter key) */
+const msgInput = document.getElementById('msg');
+function sendMessage(){
+  const text = msgInput.value.trim();
+  if(!text) return;
+  // add local user bubble
+  createBubble({ who:'user', text });
+  msgInput.value = '';
+
+  // Build messages and call backend
+  const messagesForBackend = chatData.map(m => ({ role: m.who === 'user' ? 'user' : 'assistant', content: m.text || (m.imageSrc ? 'Image: ' + (m.text || '') : '') }));
+  // append latest user message
+  messagesForBackend.push({ role: 'user', content: text });
+
+  // typing indicator
+  const typingEl = document.createElement('div');
+  typingEl.className = 'bubble ai';
+  typingEl.innerHTML = '<div class="typing">AI is typing...</div>';
+  chatBox.appendChild(typingEl); chatBox.scrollTop = chatBox.scrollHeight;
+
+  sendToBackend(messagesForBackend).then(reply=>{
+    typingEl.remove();
+    createBubble({ who:'ai', text: reply });
+    speak(reply.replace(/\n/g,' '));
+  }).catch(err=>{
+    typingEl.remove();
+    createBubble({ who:'ai', text: 'Error contacting AI server.' });
+  });
+}
+
+msgInput.addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    sendMessage();
+  }
+});
+document.getElementById('sendBtn').addEventListener('click', sendMessage);
+
+/* ---------- Upload & drag/drop ---------- */
+document.getElementById('attachBtn').addEventListener('click', ()=> document.getElementById('chatImageInput').click());
+document.getElementById('chatImageInput').addEventListener('change', async (ev)=>{
+  const files = Array.from(ev.target.files).slice(0, MAX_UPLOAD);
+  for(const f of files){
+    const reader = new FileReader();
+    reader.onload = async (e)=>{
+      const data = e.target.result;
+      const imageId = uid('img');
+      createBubble({ who:'user', text:'Image', imageSrc: data, imageId });
+      const res = await analyzeImage(data, false);
+      if(res){
+        createBubble({ who:'ai', text: `I detect: **${res.object}** (${Math.round(res.score*100)}%).` });
+        addHistoryEntry(res.object, res.score, data);
+      }
+    };
+    reader.readAsDataURL(f);
+  }
+});
+
+/* left upload */
+document.getElementById('upload').addEventListener('change', (ev)=>{
+  const files = Array.from(ev.target.files).slice(0, MAX_UPLOAD);
+  for(const f of files){
+    const reader = new FileReader();
+    reader.onload = async (e)=>{
+      const data = e.target.result;
+      await analyzeImage(data, true);
+    };
+    reader.readAsDataURL(f);
+  }
+});
+
+/* drag & drop on camera area & chat */
+const cameraArea = document.getElementById('cameraArea');
+['dragenter','dragover'].forEach(ev => cameraArea.addEventListener(ev, (e)=>{ e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave','drop'].forEach(ev => cameraArea.addEventListener(ev, (e)=>{ e.preventDefault(); document.body.classList.remove('dragging'); if(ev==='drop' && e.dataTransfer) handleDropFiles(e.dataTransfer.files); }));
+function handleDropFiles(fileList){
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/')).slice(0, MAX_UPLOAD);
+  (async()=>{
+    for(const f of files){
+      const data = await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f); });
+      await analyzeImage(data, true);
+    }
+  })();
+}
+
+/* ---------- camera start/stop & detection loop ---------- */
+document.getElementById('startCamBtn').addEventListener('click', startCamera);
+document.getElementById('stopCamBtn').addEventListener('click', stopCamera);
+document.getElementById('snapshotBtn').addEventListener('click', captureSnapshot);
+
+async function loadModel(){
+  model = await cocoSsd.load();
+  console.log('model loaded');
+  renderHistory();
+  renderChat();
+}
+async function startCamera(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} }, audio:false });
+    video.srcObject = stream;
+    document.getElementById('startCamBtn').disabled = true; document.getElementById('stopCamBtn').disabled = false;
+    await video.play();
+    setOverlaySize();
+    runDetectionLoop();
+  } catch(e){ console.error('camera error', e); alert('Camera error: ' + e.message); }
+}
+function stopCamera(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  document.getElementById('startCamBtn').disabled = false; document.getElementById('stopCamBtn').disabled = true;
+}
+function setOverlaySize(){
+  overlay.width = video.videoWidth || overlay.clientWidth;
+  overlay.height = video.videoHeight || overlay.clientHeight;
+  overlay.style.width = video.clientWidth + 'px';
+  overlay.style.height = video.clientHeight + 'px';
+}
+
+let lastDetect = 0;
+async function runDetectionLoop(){
+  if(!stream || !model) return;
+  const nowTime = performance.now();
+  if(nowTime - lastDetect < 200) { requestAnimationFrame(runDetectionLoop); return; }
+  lastDetect = nowTime;
+  try{
+    const preds = await model.detect(video);
+    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+    if(preds && preds.length){
+      const top = preds[0];
+      // draw all confident boxes
+      for(const p of preds.filter(p=>p.score>=0.45)){
+        const [x,y,w,h] = p.bbox;
+        overlayCtx.lineWidth = Math.max(2, Math.round(overlay.width / 320));
+        overlayCtx.strokeStyle = '#06b6d4';
+        overlayCtx.fillStyle = 'rgba(6,182,212,0.08)';
+        overlayCtx.strokeRect(x,y,w,h);
+        overlayCtx.fillRect(x,y-22,w,22);
+        overlayCtx.fillStyle = '#001018';
+        overlayCtx.font = '14px sans-serif';
+        overlayCtx.fillText(`${p.class} ${Math.round(p.score*100)}%`, x+6, y-6);
+      }
+
+      // stabilization: require same label repeated a few frames
+      const detected = top.class;
+      const score = top.score;
+      if(lastDetectedLabel === detected){
+        repeatCount++;
+      } else {
+        lastDetectedLabel = detected;
+        repeatCount = 1;
+      }
+
+      // only announce when repeated 3 times and confidence is reasonably high
+      if(repeatCount >= 3 && score >= MIN_CONFIDENCE){
+        const lastMessage = chatData[chatData.length-1];
+        const lastTime = lastMessage ? new Date(lastMessage.timestamp).getTime() : 0;
+        // avoid spamming same detection repeatedly
+        if(!(lastMessage && lastMessage.who==='ai' && lastMessage.text && lastMessage.text.includes(detected) && (Date.now()-lastTime < 8000))){
+          addHistoryEntry(detected, score, null);
+          createBubble({ who:'ai', text: `I detect: **${detected}** (${Math.round(score*100)}% confidence).` });
+        }
+        // reset repeat counter so it won't immediately post again
+        repeatCount = 0;
+        lastDetectedLabel = null;
+      }
+    }
+  }catch(e){ console.error('detection error', e); }
+  requestAnimationFrame(runDetectionLoop);
+}
+
+/* ---------- chat helpers: history ---------- */
+function addHistoryEntry(objectName, score, src){
+  const entry = { id: uid('hist'), timestamp: now(), object: objectName, score: Math.round(score*100), src };
+  historyData.unshift(entry);
+  if(historyData.length>200) historyData.pop();
+  saveState();
+  renderHistory();
+}
+
+/* ---------- voice recognition & speech ---------- */
+const voiceBtn = document.getElementById('voiceBtn');
+let recognition;
+if ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRec();
+  recognition.continuous = false;
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    voiceBtn.classList.add('mic-active');
+    voiceBtn.setAttribute('aria-label','Listening');
+  };
+  recognition.onend = () => {
+    voiceBtn.classList.remove('mic-active');
+    voiceBtn.setAttribute('aria-label','Start voice input');
+  };
+  recognition.onresult = (evt) => {
+    const t = evt.results[0][0].transcript;
+    document.getElementById('msg').value = t;
+    sendMessage();
+  };
+  recognition.onerror = (e) => {
+    console.warn('Speech rec error', e);
+    voiceBtn.classList.remove('mic-active');
+  };
+
+  voiceBtn.addEventListener('click', ()=> {
+    try {
+      recognition.start();
+    } catch(e){
+      // some browsers throw if you call start while already running
+      console.warn(e);
+    }
+  });
+} else {
+  voiceBtn.addEventListener('click', ()=> alert('Speech recognition not supported in this browser.'));
+}
+
+/* ---------- emoji picker ---------- */
+let pickerOpen = false;
+let pickerEl = null;
+const emojiBtn = document.getElementById('emojiBtn');
+
+emojiBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!pickerOpen) {
+    pickerEl = new EmojiMart.Picker({
+      onEmojiSelect: (emoji) => {
+        const txt = document.getElementById('msg');
+        txt.value += emoji.native;
+        txt.focus();
+      },
+      theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
+    });
+    pickerEl.style.position = 'absolute';
+    pickerEl.style.bottom = '80px';
+    // position to align with input area right
+    pickerEl.style.right = '24px';
+    pickerEl.id = '__emoji_picker';
+    document.body.appendChild(pickerEl);
+    pickerOpen = true;
+  } else {
+    if (pickerEl) pickerEl.remove();
+    pickerOpen = false;
+  }
+});
+
+// close picker when clicking anywhere else
+document.addEventListener('click', (e) => {
+  if (pickerOpen && pickerEl && !pickerEl.contains(e.target) && e.target !== emojiBtn) {
+    pickerEl.remove();
+    pickerEl = null;
+    pickerOpen = false;
+  }
+});
+
+/* ---------- undo/clear ---------- */
+document.getElementById('undoBtn').addEventListener('click', ()=>{
+  if(!lastDeleted) return;
+  // restore at original index if possible
+  const restore = { id: lastDeleted.id || uid('msg'), who:lastDeleted.who, text:lastDeleted.text, imageSrc:lastDeleted.imageSrc, imageId:lastDeleted.imageId, timestamp: new Date().toISOString() };
+  const insertIndex = (typeof lastDeleted.index === 'number' && lastDeleted.index >= 0) ? lastDeleted.index : chatData.length;
+  chatData.splice(insertIndex, 0, restore);
+  saveState();
+  renderChat();
+  lastDeleted=null;
+  undoEnable(false);
+  if(lastDeletedTimeout) clearTimeout(lastDeletedTimeout);
+});
+document.getElementById('clearAll').addEventListener('click', ()=>{
+  if(confirm('Clear chat? (history not removed)')){ chatBox.innerHTML=''; chatData=[]; saveState(); }
+});
+
+
+/* ---------- Export menu ---------- */
+const exportBtn = document.getElementById('exportBtn');
+const exportDropdown = document.getElementById('exportDropdown');
+exportBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  exportDropdown.style.display = exportDropdown.style.display === 'block' ? 'none' : 'block';
+});
+document.addEventListener('click', ()=> exportDropdown.style.display='none');
+
+document.getElementById('exportTxt').addEventListener('click', ()=>{
+  const text = historyData.map(h => `${h.timestamp}\t${h.object}\t${h.score}%`).join('\n');
+  const blob = new Blob([text], { type:'text/plain' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'detection_history.txt'; a.click();
+});
+
+document.getElementById('exportCsv').addEventListener('click', ()=>{
+  const csv = 'timestamp,object,score,src\n' + historyData.map(h => `"${h.timestamp.replace(/"/g,'""')}","${(h.object||'').replace(/"/g,'""')}",${h.score},"${(h.src||'').slice(0,60).replace(/"/g,'""')}"`).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'detection_history.csv'; a.click();
+});
+
+document.getElementById('exportPdf').addEventListener('click', ()=>{
+  // simple PDF export using jsPDF
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(12);
+  let y = 12;
+  doc.text('Detection History', 14, y); y += 8;
+  historyData.slice(0, 300).forEach(h => {
+    const line = `${h.timestamp} — ${h.object} — ${h.score}%`;
+    y += 6;
+    if(y > 280){ doc.addPage(); y = 12; }
+    doc.text(line, 14, y);
+  });
+  doc.save('detection_history.pdf');
+});
+
+document.getElementById('exportXls').addEventListener('click', ()=>{
+  const wsData = [['timestamp','object','score','src']];
+  historyData.forEach(h => wsData.push([h.timestamp, h.object, h.score, h.src||'']));
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'History');
+  XLSX.writeFile(wb, 'detection_history.xlsx');
+});
+
+
+/* ---------- init ---------- */
+loadModel();
+renderHistory();
+renderChat();
+
+/* small helper: open image in big view */
+chatBox.addEventListener('click', (e)=>{
+  const el = e.target;
+  if(el.classList.contains('thumb')){
+    const big = document.createElement('div');
+    big.style.position='fixed'; big.style.inset='0'; big.style.display='flex'; big.style.alignItems='center'; big.style.justifyContent='center';
+    big.style.background='rgba(0,0,0,0.8)'; big.style.zIndex=99999;
+    const im = document.createElement('img'); im.src = el.src; im.style.maxWidth='92%'; im.style.maxHeight='92%'; im.style.borderRadius='8px';
+    big.appendChild(im); big.addEventListener('click', ()=> big.remove()); document.body.appendChild(big);
+  }
+});
+
+/* helper to open an history image in chat */
+function openImageInChat(src, label){
+  const id = uid('img');
+  createBubble({ who:'user', text: label || 'Image', imageSrc: src, imageId:id });
+  // analyze again optionally
+  analyzeImage(src, false).then(res => {
+    if(res) createBubble({ who:'ai', text: `I detect: **${res.object}** (${Math.round(res.score*100)}%).` });
+  }).catch(()=>{});
+}
+
+/* speech synthesis */
+function speak(text){
+  if(!('speechSynthesis' in window)) return;
+  const ut = new SpeechSynthesisUtterance(text);
+  ut.lang = 'en-US';
+  speechSynthesis.speak(ut);
+}
+
+/* convenience: attach button and chat image input */
+document.getElementById('attachBtn').addEventListener('click', ()=> document.getElementById('chatImageInput').click());
+
+async function describeImage(base64Image) {
+  const res = await fetch("http://localhost:3000/api/describe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: base64Image })
+  });
+  const data = await res.json();
+  return data.description;
+}
+
+</script>
+</body>
+</html>
+
+
